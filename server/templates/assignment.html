@@ -130,6 +130,7 @@
             const assignment = await response.json();
             document.getElementById('assignmentTitle').textContent = assignment.title;
             document.getElementById('passage').textContent = assignment.text;
+            window.currentPassageText = assignment.text;
             currentMinAccuracy = assignment.min_accuracy || 80;
           }
         } catch (err) {

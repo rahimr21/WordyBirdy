@@ -19,24 +19,150 @@ const ttsBtn = document.getElementById("ttsBtn");
 
 let mediaRecorder;
 let chunks = [];
+let recognition = null;
+let passageWordSpans = []; // Ordered list of span elements for alignment
+let accumulatedTranscript = ""; // Running transcript for real-time alignment
+
+// Web Speech API support
+const supportsSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+// Normalize text like backend: lowercase, remove punctuation, split into words
+function normalizeWords(str) {
+  if (typeof str !== "string") return [];
+  const clean = str.toLowerCase().replace(/[^\w\s]/g, "");
+  return clean.split(/\s+/).filter(Boolean);
+}
+
+// Convert passage to word spans for real-time highlighting
+function convertPassageToWordSpans() {
+  const text = window.currentPassageText || passageEl.textContent || passageEl.value || "";
+  if (!text) return;
+
+  passageWordSpans = [];
+  const parts = text.split(/(\s+)/);
+  const fragment = document.createDocumentFragment();
+
+  parts.forEach((part) => {
+    if (/^\s+$/.test(part)) {
+      fragment.appendChild(document.createTextNode(part));
+    } else if (part) {
+      const span = document.createElement("span");
+      span.setAttribute("data-word-index", passageWordSpans.length);
+      span.textContent = part;
+      passageWordSpans.push(span);
+      fragment.appendChild(span);
+    }
+  });
+
+  passageEl.innerHTML = "";
+  passageEl.appendChild(fragment);
+}
+
+// Reset passage to plain text (for re-read)
+function resetPassageToPlainText() {
+  const text = window.currentPassageText || passageEl.textContent || passageEl.value || "";
+  if (!text) return;
+  passageEl.textContent = text;
+  passageWordSpans = [];
+}
+
+// Greedy alignment: map transcript words to passage words in order
+function markWordsAsRead(transcriptText) {
+  const transcriptWords = normalizeWords(transcriptText);
+  if (transcriptWords.length === 0 || passageWordSpans.length === 0) return;
+
+  const passageWords = passageWordSpans.map((s) => normalizeWords(s.textContent)[0] || "");
+  let tIdx = 0;
+  let pIdx = 0;
+
+  while (tIdx < transcriptWords.length && pIdx < passageWords.length) {
+    if (transcriptWords[tIdx] === passageWords[pIdx]) {
+      passageWordSpans[pIdx].classList.add("word-read");
+      tIdx++;
+      pIdx++;
+    } else {
+      pIdx++;
+    }
+  }
+}
+
+function startRealtimeRecognition() {
+  if (!supportsSpeechRecognition) return;
+
+  const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognitionClass();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = "en-US";
+  recognition.maxAlternatives = 1;
+
+  recognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) {
+        accumulatedTranscript += result[0].transcript + " ";
+        markWordsAsRead(accumulatedTranscript);
+      }
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.warn("Speech recognition error:", event.error);
+  };
+
+  recognition.start();
+}
+
+function stopRealtimeRecognition() {
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (e) {}
+    recognition = null;
+  }
+}
 
 // starting the recording
 startBtn.onclick = async () => {
+  stopRealtimeRecognition();
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try {
+      mediaRecorder.stop();
+    } catch (e) {}
+  }
+
+  const passageText = window.currentPassageText || passageEl.textContent || passageEl.value || "";
+  if (!passageText) {
+    statusEl.textContent = "No passage to read.";
+    return;
+  }
+
+  resetPassageToPlainText();
+  convertPassageToWordSpans();
+  accumulatedTranscript = "";
+
   chunks = [];
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.ondataavailable = e => chunks.push(e.data);
+  mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
   mediaRecorder.onstop = onStopRecording;
   mediaRecorder.start();
   startBtn.disabled = true;
   stopBtn.disabled = false;
   statusEl.textContent = "Recording…";
-  ttsBtn.style.display = "none"; 
+  ttsBtn.style.display = "none";
+
+  if (supportsSpeechRecognition) {
+    startRealtimeRecognition();
+  }
 };
 
 // Stop recording
 stopBtn.onclick = () => {
-  mediaRecorder.stop();
+  stopRealtimeRecognition();
+  if (mediaRecorder) {
+    mediaRecorder.stop();
+  }
   startBtn.disabled = false;
   stopBtn.disabled = true;
   statusEl.textContent = "Processing…";
@@ -54,8 +180,8 @@ async function onStopRecording() {
   const transcript = tJson.text || "";
   transcriptEl.textContent = transcript;
 
-  // Evaluate reading accuracy
-  const target = passageEl.textContent || passageEl.value;
+  // Evaluate reading accuracy (use stored passage text; passage may be in span form)
+  const target = window.currentPassageText || passageEl.textContent || passageEl.value;
   const eRes = await fetch("/api/evaluate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -139,7 +265,7 @@ async function onStopRecording() {
 
 // Read the correct passage aloud
 async function speakCorrectText() {
-  const text = passageEl.textContent || passageEl.value;
+  const text = window.currentPassageText || passageEl.textContent || passageEl.value;
 
   const res = await fetch("/api/tts", {
     method: "POST",

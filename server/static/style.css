@@ -184,6 +184,13 @@ li strong {
   border-radius: 4px;
 }
 
+/* Real-time "read" state in passage during recording */
+.word-read {
+  background-color: #bbdefb;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
 /* Status and messages */
 p {
   margin: 10px 0;
