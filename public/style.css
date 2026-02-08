@@ -1,0 +1,310 @@
+/* ReadTogether - Simple Light Blue Theme */
+
+* {
+  box-sizing: border-box;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+
+body {
+  font-family: 'Poppins', sans-serif;
+  font-weight: 600;
+  font-size: 18px;
+  margin: 0;
+  padding: 20px;
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  min-height: 100vh;
+  color: #1565c0;
+}
+
+h1 {
+  color: #1976d2;
+  margin-bottom: 10px;
+  font-size: 42px;
+}
+
+h2 {
+  color: #1976d2;
+  border-bottom: 2px solid #64b5f6;
+  padding-bottom: 8px;
+  margin-top: 30px;
+  font-size: 32px;
+}
+
+h3 {
+  color: #1565c0;
+  margin-top: 20px;
+  font-size: 26px;
+}
+
+a {
+  color: #1976d2;
+  text-decoration: none;
+  padding: 12px 18px;
+  background-color: #ffffff;
+  border-radius: 12px;
+  display: inline-block;
+  margin-bottom: 20px;
+  transition: all 0.2s;
+  font-size: 16px;
+  box-shadow: 0 2px 4px rgba(25, 118, 210, 0.15);
+}
+
+a:hover {
+  background-color: #bbdefb;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(25, 118, 210, 0.25);
+}
+
+/* Forms */
+form {
+  background-color: white;
+  padding: 30px;
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.2);
+  margin-bottom: 30px;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  color: #1565c0;
+  font-weight: 500;
+  font-size: 18px;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="file"],
+select,
+textarea {
+  width: 100%;
+  padding: 14px;
+  margin-bottom: 15px;
+  border: 2px solid #90caf9;
+  border-radius: 10px;
+  font-size: 16px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #1976d2;
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+}
+
+textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+/* Buttons */
+button, .btn {
+  padding: 16px 32px;
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 14px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin: 8px;
+  box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3);
+}
+
+button:hover, .btn:hover {
+  background-color: #1976d2;
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(25, 118, 210, 0.4);
+}
+
+button:disabled, .btn:disabled {
+  background-color: #90caf9;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 2px 4px rgba(25, 118, 210, 0.2);
+}
+
+button:active, .btn:active {
+  transform: translateY(-1px);
+}
+
+/* Radio buttons */
+input[type="radio"] {
+  margin-right: 8px;
+  margin-left: 15px;
+}
+
+/* Lists */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+}
+
+li {
+  background-color: white;
+  padding: 18px 20px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  border-left: 5px solid #2196f3;
+  box-shadow: 0 2px 6px rgba(25, 118, 210, 0.15);
+  font-size: 18px;
+  transition: all 0.2s;
+}
+
+li:hover {
+  transform: translateX(5px);
+  box-shadow: 0 4px 8px rgba(25, 118, 210, 0.2);
+}
+
+li strong {
+  color: #1565c0;
+  font-size: 20px;
+}
+
+/* Word feedback */
+.ok {
+  background-color: #c8e6c9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.misread {
+  background-color: #ffcdd2;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Status and messages */
+p {
+  margin: 10px 0;
+  line-height: 1.6;
+}
+
+pre {
+  background-color: #f5f5f5;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #b0bec5;
+  overflow-x: auto;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+#status {
+  color: #1565c0;
+  font-weight: 500;
+}
+
+/* Selector dropdowns */
+select {
+  background-color: white;
+  cursor: pointer;
+}
+
+/* Special buttons */
+#ttsBtn {
+  background-color: #0288d1;
+}
+
+#ttsBtn:hover {
+  background-color: #0277bd;
+}
+
+#feedbackTtsBtn {
+  background-color: #388e3c;
+}
+
+#feedbackTtsBtn:hover {
+  background-color: #2e7d32;
+}
+
+#submitBtn {
+  background-color: #43a047;
+}
+
+#submitBtn:hover {
+  background-color: #388e3c;
+}
+
+/* Message display */
+#message {
+  color: #1976d2;
+  font-weight: 500;
+  font-size: 18px;
+  padding: 16px;
+  background-color: #e3f2fd;
+  border-radius: 12px;
+  margin-top: 20px;
+  box-shadow: 0 2px 4px rgba(25, 118, 210, 0.15);
+}
+
+/* Assignment page specific styling */
+#wordFeedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 15px 0;
+}
+
+/* Transcript box */
+pre#transcript {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Student name input */
+input#studentName {
+  display: inline-block;
+  width: 300px;
+  margin-left: 15px;
+  font-size: 16px;
+}
+
+/* Divider lines in forms */
+div {
+  margin-bottom: 15px;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 10px rgba(25, 118, 210, 0.15);
+  margin-top: 20px;
+}
+
+th {
+  background-color: #2196f3;
+  color: white;
+  padding: 18px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+td {
+  padding: 16px 18px;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 17px;
+}
+
+tr:hover {
+  background-color: #f5f5f5;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}

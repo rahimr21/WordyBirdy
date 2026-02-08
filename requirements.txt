@@ -1,0 +1,5 @@
+flask
+python-dotenv
+httpx
+supabase
+PyPDF2

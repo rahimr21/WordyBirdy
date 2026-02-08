@@ -12,8 +12,11 @@ from PyPDF2 import PdfReader # for pdf processing
 from werkzeug.security import generate_password_hash, check_password_hash # for password hashing
 from functools import wraps
 
-# Loading environment variables like api keys
-load_dotenv()
+# Loading environment variables like api keys (optional on Vercel, where env vars are set by the platform)
+try:
+    load_dotenv()
+except Exception:
+    pass
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
