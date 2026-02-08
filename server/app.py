@@ -5,9 +5,9 @@ import difflib
 import json
 import io
 import logging
-from flask import Flask
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 
-logger = logging.getLogger(__name__), render_template, request, jsonify, session, redirect, url_for # for the web app
+logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
