@@ -4,12 +4,18 @@ import re
 import difflib
 import json
 import io
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for # for the web app
+import logging
+from flask import Flask
+
+logger = logging.getLogger(__name__), render_template, request, jsonify, session, redirect, url_for # for the web app
 from dotenv import load_dotenv
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import httpx
 from supabase import create_client, Client
 from PyPDF2 import PdfReader # for pdf processing
 from werkzeug.security import generate_password_hash, check_password_hash # for password hashing
+from email_validator import validate_email, EmailNotValidError
 from functools import wraps
 
 # Loading environment variables like api keys (optional on Vercel, where env vars are set by the platform)
@@ -20,19 +26,69 @@ except Exception:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev")
+FLASK_ENV = os.getenv("FLASK_ENV", "development")
+IS_PRODUCTION = FLASK_ENV == "production"
+
+# Validate required env vars on startup
+if not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+    missing = [k for k, v in [
+        ("OPENAI_API_KEY", OPENAI_API_KEY),
+        ("SUPABASE_URL", SUPABASE_URL),
+        ("SUPABASE_KEY", SUPABASE_KEY)
+    ] if not v]
+    raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+if IS_PRODUCTION and (not SECRET_KEY or SECRET_KEY == "dev"):
+    raise RuntimeError("SECRET_KEY must be set to a secure value in production")
 
 # Initializing the Flask app
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev")
+app.secret_key = SECRET_KEY
+
+# Secure session and upload config
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB max upload
 
 # starting the supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Input validation limits
+MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_AUDIO_SIZE = 25 * 1024 * 1024  # 25 MB (Whisper limit)
+MAX_TEXT_LENGTH = 50_000
+MAX_TTS_LENGTH = 4_096  # OpenAI TTS limit
+MAX_MISREADS = 500
+MAX_TITLE_LENGTH = 200
+MAX_FULL_NAME_LENGTH = 200
+VALID_GRADE_LEVELS = ("K", "1", "2", "3", "4", "5", "6", "7", "8")
 
-# Authentication decorators, used for login routes
+# Rate limiting: prefer user_id when authenticated, else IP
+def get_rate_limit_key():
+    if "user_id" in session:
+        return f"user:{session['user_id']}"
+    return f"ip:{get_remote_address() or '127.0.0.1'}"
+
+
+limiter = Limiter(
+    key_func=get_rate_limit_key,
+    app=app,
+    default_limits=["60 per minute"],
+    storage_uri="memory://",
+)
+
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+
+
+# Authentication decorators: page routes use redirect, API routes use JSON 401
 
 def login_required(f):
-    """Decorator to require login for a route."""
+    """Decorator for page routes - redirects to index when not logged in."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
@@ -42,7 +98,7 @@ def login_required(f):
 
 
 def student_required(f):
-    """Decorator to require student role."""
+    """Decorator for page routes - redirects when not student."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
@@ -54,7 +110,7 @@ def student_required(f):
 
 
 def teacher_required(f):
-    """Decorator to require teacher role."""
+    """Decorator for page routes - redirects when not teacher."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
@@ -63,6 +119,34 @@ def teacher_required(f):
             return redirect(url_for('index'))
         return f(*args, **kwargs)
     return decorated_function
+
+
+def api_login_required(f):
+    """Decorator for API routes - returns JSON 401 when not logged in."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({"error": "Authentication required"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def api_teacher_required(f):
+    """Decorator for API routes - returns JSON 401 when not teacher."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({"error": "Authentication required"}), 401
+        if session.get('role') != 'teacher':
+            return jsonify({"error": "Teacher access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def safe_error_response(e):
+    """Log error server-side, return generic message to client to avoid leaking internal details."""
+    logger.exception("Request error")
+    return jsonify({"error": "An error occurred. Please try again."}), 500
 
 
 #helper functions
@@ -168,13 +252,14 @@ def assignment():
 
 # route for signing up a new user, sending to supabase
 @app.post("/api/signup")
+@limiter.limit("5 per 5 minutes")
 def signup():
     """Create a new user account."""
     try:
         data = request.get_json()
-        full_name = data.get("full_name")
-        email = data.get("email")
-        password = data.get("password")
+        full_name = (data.get("full_name") or "").strip()
+        email = (data.get("email") or "").strip()
+        password = data.get("password") or ""
         role = data.get("role")
         
         if not all([full_name, email, password, role]):
@@ -182,6 +267,21 @@ def signup():
         
         if role not in ["student", "teacher"]:
             return jsonify({"error": "Invalid role"}), 400
+        
+        if len(full_name) > MAX_FULL_NAME_LENGTH:
+            return jsonify({"error": "Full name too long"}), 400
+        
+        if len(password) < 8:
+            return jsonify({"error": "Password must be at least 8 characters"}), 400
+        if len(password) > 128:
+            return jsonify({"error": "Password too long"}), 400
+        
+        if len(email) > 254:
+            return jsonify({"error": "Invalid email"}), 400
+        try:
+            validate_email(email)
+        except EmailNotValidError:
+            return jsonify({"error": "Invalid email format"}), 400
         
         # Checking if user alr exists
         existing = supabase.table("users").select("*").eq("email", email).execute()
@@ -214,19 +314,23 @@ def signup():
             "full_name": user['full_name']
         }), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for logging in a user, sending to supabase
 @app.post("/api/login")
+@limiter.limit("10 per 5 minutes")
 def login():
     """Log in an existing user."""
     try:
         data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
+        email = (data.get("email") or "").strip()
+        password = data.get("password") or ""
         
         if not email or not password:
             return jsonify({"error": "Email and password required"}), 400
+        
+        if len(email) > 254:
+            return jsonify({"error": "Invalid email or password"}), 401
         
         # Get user from database
         result = supabase.table("users").select("*").eq("email", email).execute()
@@ -252,7 +356,7 @@ def login():
             "full_name": user['full_name']
         }), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for logging out a user
 @app.post("/api/logout")
@@ -277,12 +381,25 @@ def current_user():
 
 # route for using the whisper api to transcribe audio
 @app.post("/api/transcribe")
+@limiter.limit("20 per minute")
+@api_login_required
 def transcribe():
     """Send audio to OpenAI Whisper API and return transcript."""
     if "audio" not in request.files:
         return jsonify({"error": "No audio file received"}), 400
 
     audio_file = request.files["audio"]
+    if audio_file.filename == "":
+        return jsonify({"error": "No audio file selected"}), 400
+    
+    content_length = request.content_length
+    if content_length and content_length > MAX_AUDIO_SIZE:
+        return jsonify({"error": "Audio file too large"}), 400
+    
+    mimetype = (audio_file.mimetype or "").lower()
+    if mimetype and not mimetype.startswith("audio/"):
+        return jsonify({"error": "Invalid audio file type"}), 400
+
     url = "https://api.openai.com/v1/audio/transcriptions"
 
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
@@ -299,23 +416,28 @@ def transcribe():
         r = client.post(url, headers=headers, files=files, data=data)
 
     if r.status_code >= 400:
-        return jsonify({"error": r.text}), 500
+        logger.warning("Whisper API error: %s", r.status_code)
+        return jsonify({"error": "Transcription failed. Please try again."}), 500
 
     out = r.json()
     return jsonify({"text": out.get("text", "")})
 
 # route for evaluating the reading accuracy by comparing target passage to transcript
 @app.post("/api/evaluate")
+@limiter.limit("60 per minute")
+@api_login_required
 def evaluate():
     """Compares target passage vs. transcript and labels each word."""
-    body = request.get_json(force=True)
-    target = body.get("target", "")
-    transcript = body.get("transcript", "")
+    body = request.get_json(force=True) or {}
+    target = (body.get("target") or "")[:MAX_TEXT_LENGTH]
+    transcript = (body.get("transcript") or "")[:MAX_TEXT_LENGTH]
     aligned = align_words(target, transcript)
     return jsonify(aligned)
 
 #route for using the gpt api to generate encouragement, tips, and questions using prompt
 @app.post("/api/coach")
+@limiter.limit("20 per minute")
+@api_login_required
 def coach():
     """
     Calls GPT to produce:
@@ -323,11 +445,14 @@ def coach():
       - pronunciation tips for misread words
       - two comprehension questions
     """
-    body = request.get_json(force=True)
-    target = body.get("target", "")
-    transcript = body.get("transcript", "")
-    misreads = body.get("misreads", [])
-    grade_level = body.get("grade_level", "")
+    body = request.get_json(force=True) or {}
+    target = (body.get("target") or "")[:MAX_TEXT_LENGTH]
+    transcript = (body.get("transcript") or "")[:MAX_TEXT_LENGTH]
+    misreads_raw = body.get("misreads", [])
+    misreads = [str(m)[:200] for m in misreads_raw[:MAX_MISREADS]] if isinstance(misreads_raw, list) else []
+    grade_level = str(body.get("grade_level") or "").strip()
+    if grade_level and grade_level not in VALID_GRADE_LEVELS:
+        grade_level = ""
     
     # Create grade level description
     if grade_level:
@@ -407,14 +532,19 @@ def coach():
 
 # route for using the gpt api FOR TTS
 @app.post("/api/tts")
+@limiter.limit("20 per minute")
+@api_login_required
 def tts():
     """Convert corrected target passage to speech using OpenAI TTS."""
     
-    body = request.get_json(force=True)
-    text = body.get("text", "")
+    body = request.get_json(force=True) or {}
+    text = (body.get("text") or "").strip()
 
     if not text:
         return jsonify({"error": "Missing `text`"}), 400
+    
+    if len(text) > MAX_TTS_LENGTH:
+        return jsonify({"error": "Text too long for TTS"}), 400
 
     url = "https://api.openai.com/v1/audio/speech"
 
@@ -433,7 +563,8 @@ def tts():
         r = client.post(url, headers=headers, json=payload)
 
     if r.status_code >= 400:
-        return jsonify({"error": r.text}), 500
+        logger.warning("TTS API error: %s", r.status_code)
+        return jsonify({"error": "Text-to-speech failed. Please try again."}), 500
 
     # return raw audio file so browser can play it
     return r.content, 200, {
@@ -442,19 +573,39 @@ def tts():
 
 # route for creating a new assignment, and updating the database from teachers end
 @app.post("/api/assignments")
+@api_teacher_required
 def create_assignment():
     """Create a new assignment (teacher only)."""
     try:
-        title = request.form.get("title")
-        grade_level = request.form.get("grade_level")
+        title = (request.form.get("title") or "").strip()
+        grade_level = (request.form.get("grade_level") or "").strip()
         min_accuracy = request.form.get("min_accuracy", 80)
         pdf_file = request.files.get("pdf")
+        
+        if not title:
+            return jsonify({"error": "Title is required"}), 400
+        if len(title) > MAX_TITLE_LENGTH:
+            return jsonify({"error": "Title too long"}), 400
+        if grade_level not in VALID_GRADE_LEVELS:
+            return jsonify({"error": "Invalid grade level"}), 400
+        
+        try:
+            min_accuracy = float(min_accuracy)
+        except (TypeError, ValueError):
+            min_accuracy = 80.0
+        if not 0 <= min_accuracy <= 100:
+            return jsonify({"error": "Minimum accuracy must be between 0 and 100"}), 400
         
         extracted_text = None
         pdf_filename = None
         
         # Extract text from PDF if provided
-        if pdf_file:
+        if pdf_file and pdf_file.filename:
+            content_length = request.content_length
+            if content_length and content_length > MAX_PDF_SIZE:
+                return jsonify({"error": "PDF file too large"}), 400
+            if not pdf_file.filename.lower().endswith(".pdf"):
+                return jsonify({"error": "Only PDF files are allowed"}), 400
             pdf_filename = pdf_file.filename
             extracted_text = extract_text_from_pdf(pdf_file)
             
@@ -472,20 +623,22 @@ def create_assignment():
         result = supabase.table("assignments").insert(assignment_data).execute()
         return jsonify(result.data[0]), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for getting all assignments from the database on student page
 @app.get("/api/assignments")
+@api_login_required
 def get_assignments():
     """Get all assignments (for students)."""
     try:
         result = supabase.table("assignments").select("*").execute()
         return jsonify(result.data)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for getting a specific assignment by ID on student page
 @app.get("/api/assignments/<int:assignment_id>")
+@api_login_required
 def get_assignment(assignment_id):
     """Get a specific assignment by ID."""
     try:
@@ -494,20 +647,22 @@ def get_assignment(assignment_id):
             return jsonify(result.data[0])
         return jsonify({"error": "Assignment not found"}), 404
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for getting all submissions from the database on teacher page
 @app.get("/api/submissions")
+@api_teacher_required
 def get_submissions():
     """Get all submissions (for teacher)."""
     try:
         result = supabase.table("submissions").select("*").order("created_at", desc=True).execute()
         return jsonify(result.data)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for getting a specific submission by assignment ID on teacher page
 @app.get("/api/submissions/<int:assignment_id>")
+@api_teacher_required
 def get_submission(assignment_id):
     """Get submission for a specific assignment."""
     try:
@@ -516,19 +671,42 @@ def get_submission(assignment_id):
             return jsonify(result.data[0])
         return jsonify({"error": "No submission found"}), 404
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for creating or updating a submission with accuracy and words missed so the teacher can see it
 @app.post("/api/submissions")
-@login_required
+@api_login_required
 def create_or_update_submission():
     """Create or update a submission with accuracy and words missed."""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         assignment_id = data.get("assignment_id")
         accuracy = data.get("accuracy")
-        words_missed = data.get("words_missed", [])
+        words_missed_raw = data.get("words_missed", [])
         submitted = data.get("submitted", False)
+        
+        if assignment_id is None:
+            return jsonify({"error": "assignment_id is required"}), 400
+        try:
+            assignment_id = int(assignment_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid assignment_id"}), 400
+        if assignment_id <= 0:
+            return jsonify({"error": "Invalid assignment_id"}), 400
+        
+        # Validate assignment exists
+        assign_result = supabase.table("assignments").select("id").eq("id", assignment_id).execute()
+        if not assign_result.data:
+            return jsonify({"error": "Assignment not found"}), 404
+        
+        words_missed = [str(w)[:200] for w in words_missed_raw[:MAX_MISREADS]] if isinstance(words_missed_raw, list) else []
+        
+        try:
+            accuracy = float(accuracy) if accuracy is not None else None
+        except (TypeError, ValueError):
+            accuracy = None
+        if accuracy is not None and not (0 <= accuracy <= 100):
+            return jsonify({"error": "Accuracy must be between 0 and 100"}), 400
         
         # Use authenticated user's data
         user_id = session['user_id']
@@ -557,16 +735,25 @@ def create_or_update_submission():
             }).execute()
             return jsonify(result.data[0]), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 # route for submitting an assignment, marking it as submitted so the teacher can see it
 @app.post("/api/submit-assignment")
-@login_required
+@api_login_required
 def submit_assignment():
     """Submit an assignment (marks it as submitted)."""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         assignment_id = data.get("assignment_id")
+        
+        if assignment_id is None:
+            return jsonify({"error": "assignment_id is required"}), 400
+        try:
+            assignment_id = int(assignment_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid assignment_id"}), 400
+        if assignment_id <= 0:
+            return jsonify({"error": "Invalid assignment_id"}), 400
         
         # Use authenticated user's data
         user_id = session['user_id']
@@ -584,10 +771,10 @@ def submit_assignment():
         
         return jsonify(result.data[0])
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return safe_error_response(e)
 
 
 
 #running the actual app
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=not IS_PRODUCTION, port=5001)

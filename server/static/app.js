@@ -1,3 +1,11 @@
+// Escape HTML to prevent XSS when rendering user/GPT content
+function escapeHtml(str) {
+  if (typeof str !== "string") return "";
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 // getting all the elements from the html page like buttons and text areas
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
@@ -99,21 +107,21 @@ async function onStopRecording() {
     encouragementEl.textContent = coach.encouragement;
   }
   
-  // Display tips
+  // Display tips (escape GPT output to prevent XSS)
   if (tipsEl) {
     if (coach.tips && coach.tips.length > 0) {
-      tipsEl.innerHTML = coach.tips.map(t => `<p><strong>${t.word}:</strong> ${t.tip}</p>`).join('');
+      tipsEl.innerHTML = coach.tips.map(t => `<p><strong>${escapeHtml(t.word)}:</strong> ${escapeHtml(t.tip)}</p>`).join('');
     } else {
-      tipsEl.innerHTML = '<p>No tips for this reading.</p>';
+      tipsEl.textContent = 'No tips for this reading.';
     }
   }
   
-  // Display questions
+  // Display questions (escape GPT output to prevent XSS)
   if (questionsEl) {
     if (coach.questions && coach.questions.length > 0) {
-      questionsEl.innerHTML = coach.questions.map((q, i) => `<p>${i + 1}. ${q}</p>`).join('');
+      questionsEl.innerHTML = coach.questions.map((q, i) => `<p>${escapeHtml(String(i + 1))}. ${escapeHtml(q)}</p>`).join('');
     } else {
-      questionsEl.innerHTML = '<p>No questions available.</p>';
+      questionsEl.textContent = 'No questions available.';
     }
   }
   
@@ -189,7 +197,7 @@ function renderWordFeedback(data) {
   const words = data.words || [];
   accuracyEl.textContent = `Accuracy: ${data.accuracy || 0}%`;
   wordFeedbackEl.innerHTML = words
-    .map(w => `<span class="${w.status}">${w.word}</span>`)
+    .map(w => `<span class="${escapeHtml(w.status)}">${escapeHtml(w.word)}</span>`)
     .join(" ");
 }
 
