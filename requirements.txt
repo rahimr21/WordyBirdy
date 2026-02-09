@@ -1,5 +1,7 @@
 flask
+flask-limiter
 python-dotenv
 httpx
 supabase
 PyPDF2
+email-validator
